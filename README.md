@@ -171,5 +171,8 @@ Project prepared by the Section-14 team for Galgotias University.
 
 ------
 
-License: MIT (add a LICENSE file if desired)
+## License
+
+This project is licensed under the MIT License — see the `LICENSE` file in the repository root for details.
+
 # DeCloud
