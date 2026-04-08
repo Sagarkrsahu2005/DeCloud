@@ -158,6 +158,43 @@ Common variables you might add (example names — confirm in code before using):
 
 Note: this is a practical zero-knowledge privacy design for a client app, not a formal zero-knowledge proof (ZKP) protocol.
 
+## Hurdles Faced in the New Update (And How We Solved Them)
+
+1. Crypto worked in idea, but TypeScript blocked Web Crypto inputs
+- **Problem in simple words**: We generated encryption keys in the browser, but TypeScript gave strict type errors when passing those keys to Web Crypto.
+- **How we solved it**: We added a clean conversion step to pass exact `ArrayBuffer` values into `crypto.subtle.importKey`. After that, encryption/decryption worked without type errors.
+
+2. React 19 ref typing caused compile errors
+- **Problem in simple words**: The service reference pattern we used earlier was valid before, but React 19 expects an explicit initial value.
+- **How we solved it**: We initialized the service ref with `null` and created the service safely on first use. This removed the compile issue.
+
+3. Download flow became async after adding encryption
+- **Problem in simple words**: Earlier, files were downloaded directly. After encryption, we first needed to decrypt in memory, which made the flow asynchronous.
+- **How we solved it**: We updated the download handler to await decryption, then trigger file download. User experience stayed the same, but security improved.
+
+4. Self-destruct links needed secure key sharing without server access
+- **Problem in simple words**: We wanted links that expire, but also wanted the server to never see decryption keys.
+- **How we solved it**: We put the key in URL fragment (`#k=...`) and only stored link policy (expiry/views) in local app state. Fragments are not sent to servers in normal HTTP requests.
+
+5. Link lifecycle edge cases (expired, reused, invalid token)
+- **Problem in simple words**: People may open an old link, refresh multiple times, or use a broken URL.
+- **How we solved it**: We added strict validation for token existence, expiry time, and remaining views. If limit is reached, link is invalidated immediately.
+
+6. Backward compatibility with old uploaded files
+- **Problem in simple words**: Some previously uploaded files were stored in old plain format, and we did not want them to break.
+- **How we solved it**: We kept fallback handling for old records while using encrypted format for all new uploads.
+
+7. Tooling mismatch during validation
+- **Problem in simple words**: Lint command failed because ESLint binary was not available in this environment.
+- **How we solved it**: We validated the update using TypeScript compile check (`pnpm exec tsc --noEmit`) and confirmed the code is type-safe.
+
+### Result After Resolving These Hurdles
+
+- Client-side encryption is active for new uploads.
+- Keys remain client-side and are not exposed to server APIs.
+- Self-destruct links now support both time expiry and view limits.
+- The updated flow compiles cleanly and is ready for demo/presentation.
+
 ## Running & Demonstration Tips for Assessment
 
 - Start the dev server and walk through these flows in the browser:
