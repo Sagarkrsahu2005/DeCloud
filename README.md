@@ -23,15 +23,18 @@ Version: 0.1.0
 
 ## Project Overview
 
-"Decentralized Cloud Storage with Blockchain" (a.k.a. Decloud) is a web application built with Next.js that demonstrates a decentralized approach to file storage and sharing augmented with blockchain-based integrity and verification features. The goal of the project is to explore how decentralized storage can be combined with blockchain primitives to provide provable ownership, tamper-evidence, and secure sharing for user files.
+"Decentralized Cloud Storage with Blockchain" (DeCloud) is a secure file sharing application built with Next.js that demonstrates a zero-knowledge-inspired access model. Files are encrypted in the browser before storage, keys remain client-side, and access links can self-destruct after limited views or time.
 
-This repository contains the frontend and application logic used for the university project deliverable. It is implemented as a modern React/Next.js app with an emphasis on modular UI components, a clear separation of concerns, and simple integration points for decentralized storage and blockchain services.
+This repository contains the frontend and client-side logic for the university project deliverable. The architecture emphasizes privacy, wallet-oriented identity, and share-by-link controls without server-side key exposure.
 
 ## Key Features
 
 - Upload and browse files using a responsive UI
-- Share files via secure links / modal interfaces
-- File metadata and integrity tied to a blockchain layer (concept & wiring in code)
+- Client-side AES-GCM encryption before file persistence
+- Client-side key management (keys never sent to server)
+- Share files via secure links and wallet-based sharing
+- Self-destructing access links (expiry + max view count)
+- File metadata and integrity hash generation for verification flow
 - Lightweight wallet / modal UI for blockchain interactions
 - Responsive UI built with Tailwind CSS and Radix UI primitives
 
@@ -125,7 +128,9 @@ Notes:
 
 ## Environment Variables
 
-I scanned the codebase for direct `process.env` usage and didn't find mandatory runtime environment variables. However, optional integrations (analytics, external storage providers, blockchain RPC endpoints, or custody services) may require environment variables. If you encounter runtime errors about missing keys, create a `.env.local` in the project root with the appropriate values.
+The current implementation does not require mandatory environment variables for core encrypted upload and sharing flows.
+
+If optional services are added later (analytics, external decentralized storage gateway, blockchain RPC), create a `.env.local` and configure integration keys.
 
 Common variables you might add (example names — confirm in code before using):
 
@@ -136,25 +141,41 @@ Common variables you might add (example names — confirm in code before using):
 ## How it works (concise, professor-oriented)
 
 - The UI is implemented with Next.js pages and server/client components under `app/`.
-- File upload and listing UI is implemented in `components/decloud/*`, which interacts with helper functions in `lib/decloud-logic.ts`.
-- Blockchain-related interactions are exposed via wallet modal components and helper methods; hashes or transaction records can be created to prove file integrity and ownership.
-- The project is primarily a proof-of-concept: it demonstrates UI flows and the integration points necessary for a decentralized storage + blockchain verification system. The architecture separates UI, client logic, and any external service integrations so the code can be extended to plug in a real decentralized storage backend (IPFS/Filestorage) and a blockchain provider.
+- File upload/list/share actions are implemented in `components/decloud/*` and orchestrated by `app/page.tsx`.
+- Core logic in `lib/decloud-logic.ts` encrypts each file client-side using AES-GCM and stores only ciphertext + IV.
+- File encryption keys are generated in-browser and stored client-side per wallet context.
+- Download flow decrypts only on the client side using local key material.
+- Self-destruct links are generated with expiry and max-view limits; on access, the link state is decremented and invalidated when exhausted.
+- Integrity hash values are generated from encrypted payload metadata to support tamper-evidence and blockchain-ready verification patterns.
+
+## Security Model
+
+- **No server-level key access**: encryption keys are never transmitted to backend APIs in this project flow.
+- **Client-side key management**: keys are generated and retained in browser storage for the active wallet context.
+- **Encrypted-at-rest in app storage**: stored records contain encrypted payloads, not plain file bytes.
+- **Fragment-key links**: link key material is placed in URL fragment (`#k=...`), which is not sent in HTTP requests.
+- **Self-destruct policy**: links can expire by time and by access count.
+
+Note: this is a practical zero-knowledge privacy design for a client app, not a formal zero-knowledge proof (ZKP) protocol.
 
 ## Running & Demonstration Tips for Assessment
 
 - Start the dev server and walk through these flows in the browser:
-  1. Upload a sample file using the Upload card.
-  2. Open the file grid and inspect metadata.
-  3. Use the Share modal to generate a share preview.
-  4. Open the Wallet modal to demonstrate signing or verification flows (if connected).
-- If a network or RPC is required and not configured, explain this is a configurable integration and show where to add the RPC in `lib/decloud-logic.ts` or environment variables.
+  1. Connect a wallet in the UI.
+  2. Upload a sample file and explain that encryption happens client-side.
+  3. Open Share modal, set expiry and max views, then generate secure link.
+  4. Open the generated link to trigger decryption and controlled download.
+  5. Re-open same link to show self-destruct behavior after view limit.
+  6. Show file hash metadata for integrity/tamper-evidence discussion.
 
 ## Known Limitations & Future Work
 
-- Proof-of-concept: storage backend and blockchain integrations may be stubbed or minimal. To make this production-ready:
-  - Integrate a decentralized storage provider (IPFS, Web3.Storage, or similar).
-  - Add a backend signing service or client-side wallet integration for on-chain transactions.
-  - Add unit and integration tests for critical flows.
+- This is currently browser-storage based. For production:
+  - Move encrypted payloads to decentralized storage (IPFS/Filecoin/Web3.Storage).
+  - Replace local key sharing with recipient public-key encryption (ECIES/X25519 pattern).
+  - Add signed link metadata and replay protection.
+  - Add unit/integration tests for cryptographic and link-expiry logic.
+  - Add audit logging and incident-safe key rotation policies.
 
 ## Contributing
 
@@ -174,5 +195,3 @@ Project prepared by the Section-14 team for Galgotias University.
 ## License
 
 This project is licensed under the MIT License — see the `LICENSE` file in the repository root for details.
-
-# DeCloud

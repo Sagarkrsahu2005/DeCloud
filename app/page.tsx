@@ -26,6 +26,28 @@ export default function Page() {
     service.hydrateFromStorage().then(setState)
   }, [service])
 
+  useEffect(() => {
+    const consumeSecureLink = async () => {
+      if (typeof window === "undefined") return
+      if (!window.location.search.includes("share=")) return
+
+      try {
+        const payload = await service.consumeShareLinkFromUrl(window.location.href)
+        const a = document.createElement("a")
+        a.href = payload.dataURL
+        a.download = payload.name
+        a.click()
+        showToast("success", "Secure link accessed. Remaining views updated.")
+      } catch {
+        showToast("error", "Secure link is invalid, expired, or already destroyed")
+      } finally {
+        window.history.replaceState({}, "", window.location.pathname)
+      }
+    }
+
+    consumeSecureLink()
+  }, [service])
+
   const showToast = (type: "success" | "error" | "info", message: string) => {
     setToast({ type, message })
     setTimeout(() => setToast(null), 3000)
@@ -74,12 +96,18 @@ export default function Page() {
 
   const handleDownload = (id: number) => {
     try {
-      const { name, dataURL } = service.getDownloadPayload(id)
-      const a = document.createElement("a")
-      a.href = dataURL
-      a.download = name
-      a.click()
-      showToast("success", "Download started")
+      service
+        .getDownloadPayload(id)
+        .then(({ name, dataURL }) => {
+          const a = document.createElement("a")
+          a.href = dataURL
+          a.download = name
+          a.click()
+          showToast("success", "Download started")
+        })
+        .catch(() => {
+          showToast("error", "Download failed")
+        })
     } catch (err) {
       showToast("error", "Download failed")
     }
@@ -100,6 +128,16 @@ export default function Page() {
     } catch (err) {
       showToast("error", "Share failed")
     }
+  }
+
+  const handleGenerateSelfDestructLink = async (
+    fileId: number,
+    options: { expiresInHours: number; maxViews: number },
+  ) => {
+    const link = await service.createSelfDestructLink(fileId, options)
+    setState(service.getState())
+    showToast("success", "Secure link generated")
+    return link
   }
 
   const displayFiles = activeTab === "my" ? state.files : state.sharedFiles
@@ -138,6 +176,7 @@ export default function Page() {
         <ShareModal
           file={selectedFile}
           onShare={handleShareWithWallet}
+          onGenerateLink={handleGenerateSelfDestructLink}
           onClose={() => {
             setShowShareModal(false)
             setSelectedFile(null)

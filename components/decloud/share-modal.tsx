@@ -7,17 +7,37 @@ import type { FileRecord } from "@/lib/decloud-logic"
 interface ShareModalProps {
   file: FileRecord
   onShare: (wallet: string) => void
+  onGenerateLink: (fileId: number, options: { expiresInHours: number; maxViews: number }) => Promise<string>
   onClose: () => void
 }
 
-export default function ShareModal({ file, onShare, onClose }: ShareModalProps) {
+export default function ShareModal({ file, onShare, onGenerateLink, onClose }: ShareModalProps) {
   const [wallet, setWallet] = useState("")
   const [copied, setCopied] = useState(false)
+  const [expiresInHours, setExpiresInHours] = useState(24)
+  const [maxViews, setMaxViews] = useState(1)
+  const [generatedLink, setGeneratedLink] = useState(file.shareLink)
+  const [generating, setGenerating] = useState(false)
+
+  const shareLink = generatedLink || file.shareLink
 
   const handleCopy = () => {
-    navigator.clipboard.writeText(file.shareLink)
+    navigator.clipboard.writeText(shareLink)
     setCopied(true)
     setTimeout(() => setCopied(false), 2000)
+  }
+
+  const handleGenerateLink = async () => {
+    setGenerating(true)
+    try {
+      const link = await onGenerateLink(file.id, {
+        expiresInHours: Math.max(1, expiresInHours),
+        maxViews: Math.max(1, maxViews),
+      })
+      setGeneratedLink(link)
+    } finally {
+      setGenerating(false)
+    }
   }
 
   const handleShare = () => {
@@ -37,13 +57,38 @@ export default function ShareModal({ file, onShare, onClose }: ShareModalProps) 
           </button>
         </div>
 
-        {/* Public Link */}
+        {/* Self-destruct Link */}
         <div className="mb-6">
-          <p className="text-xs text-gray-400 mb-2">Public Share Link</p>
+          <p className="text-xs text-gray-400 mb-2">Self-destruct Access Link</p>
+          <div className="grid grid-cols-2 gap-2 mb-2">
+            <input
+              type="number"
+              min={1}
+              value={expiresInHours}
+              onChange={(e) => setExpiresInHours(Number(e.target.value || 1))}
+              className="glass-sm p-2 rounded-lg text-sm text-white placeholder-gray-500 outline-none"
+              placeholder="Expires (hours)"
+            />
+            <input
+              type="number"
+              min={1}
+              value={maxViews}
+              onChange={(e) => setMaxViews(Number(e.target.value || 1))}
+              className="glass-sm p-2 rounded-lg text-sm text-white placeholder-gray-500 outline-none"
+              placeholder="Max views"
+            />
+          </div>
+          <button
+            onClick={handleGenerateLink}
+            disabled={generating}
+            className="w-full mb-2 px-3 py-2 rounded-lg bg-white/10 text-sm text-white hover:bg-white/15 transition-colors disabled:opacity-60"
+          >
+            {generating ? "Generating secure link..." : "Generate Secure Link"}
+          </button>
           <div className="glass-sm p-3 rounded-lg flex items-center gap-2">
             <input
               type="text"
-              value={file.shareLink}
+              value={shareLink}
               readOnly
               className="flex-1 bg-transparent text-sm text-gray-300 font-mono outline-none"
             />
@@ -85,7 +130,9 @@ export default function ShareModal({ file, onShare, onClose }: ShareModalProps) 
           </button>
         </div>
 
-        <p className="text-xs text-gray-500 mt-4 text-center">Recipient must connect their wallet to access</p>
+        <p className="text-xs text-gray-500 mt-4 text-center">
+          Encryption key is embedded in URL fragment only; servers never receive it.
+        </p>
       </div>
     </div>
   )
