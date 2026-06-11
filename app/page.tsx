@@ -63,8 +63,8 @@ export default function Page() {
     }
   }
 
-  const handleDisconnect = () => {
-    service.disconnectWallet()
+  const handleDisconnect = async () => {
+    await service.disconnectWallet()
     setState(service.getState())
     showToast("success", "Wallet disconnected")
   }
@@ -74,22 +74,33 @@ export default function Page() {
       showToast("error", "Connect wallet first")
       return
     }
+    if (!files || files.length === 0) {
+      showToast("error", "No files selected")
+      return
+    }
+    console.log(`[Upload] Starting upload of ${files.length} file(s)`, files)
     setUploading(true)
     try {
       for (const file of files) {
+        console.log(`[Upload] Processing file:`, file.name, `size: ${file.size}`)
         await service.uploadFile(file)
+        console.log(`[Upload] Successfully encrypted and stored:`, file.name)
       }
-      setState(service.getState())
+      const newState = service.getState()
+      console.log(`[Upload] New state:`, newState)
+      setState(newState)
       showToast("success", `${files.length} file(s) uploaded`)
-    } catch (err) {
-      showToast("error", "Upload failed")
+    } catch (err: any) {
+      const errorMsg = err?.message || String(err) || "Upload failed"
+      console.error("[Upload] Upload error:", err, "Error message:", errorMsg)
+      showToast("error", `Upload failed: ${errorMsg}`)
     } finally {
       setUploading(false)
     }
   }
 
-  const handleDelete = (id: number) => {
-    service.deleteFile(id)
+  const handleDelete = async (id: number) => {
+    await service.deleteFile(id)
     setState(service.getState())
     showToast("success", "File deleted")
   }
@@ -118,10 +129,10 @@ export default function Page() {
     setShowShareModal(true)
   }
 
-  const handleShareWithWallet = (wallet: string) => {
+  const handleShareWithWallet = async (wallet: string) => {
     if (!selectedFile) return
     try {
-      service.shareWithWallet(selectedFile.id, wallet)
+      await service.shareWithWallet(selectedFile.id, wallet)
       setShowShareModal(false)
       setSelectedFile(null)
       showToast("success", "File shared")

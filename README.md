@@ -130,6 +130,11 @@ Notes:
 
 The current implementation does not require mandatory environment variables for core encrypted upload and sharing flows.
 
+MongoDB connection support is now available for server routes. Add these values to a local environment file when you want to use MongoDB:
+
+- MONGODB_URI=
+- MONGODB_DB=decloud
+
 If optional services are added later (analytics, external decentralized storage gateway, blockchain RPC), create a `.env.local` and configure integration keys.
 
 Common variables you might add (example names — confirm in code before using):
@@ -137,6 +142,12 @@ Common variables you might add (example names — confirm in code before using):
 - NEXT_PUBLIC_BLOCKCHAIN_RPC=
 - NEXT_PUBLIC_ANALYTICS_ID=
 - STORAGE_API_KEY=
+
+MongoDB verification route:
+
+- GET /api/mongo/health
+
+This route pings the configured database and returns a simple JSON status response.
 
 ## How it works (concise, professor-oriented)
 

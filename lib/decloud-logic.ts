@@ -1,6 +1,7 @@
 "use client"
 
 import { useRef, useMemo, useSyncExternalStore } from "react"
+import { BrowserProvider } from "ethers"
 
 export type ProviderName = "MetaMask" | "Phantom" | "Coinbase Wallet" | "WalletConnect" | "Trust Wallet" | "Rainbow"
 
@@ -68,25 +69,163 @@ interface LinkOptions {
   maxViews?: number
 }
 
-const readAllFiles = (): Record<string, FileRecord[]> => JSON.parse(localStorage.getItem(LS_ALL_FILES) || "{}")
+// ===== IndexedDB Storage Setup =====
+const DB_NAME = "decloud_storage"
+const STORE_FILES = "files"
+const STORE_KEYS = "keys"
+const STORE_LINKS = "links"
+const FILES_API = "/api/files"
 
-const writeAllFiles = (map: Record<string, FileRecord[]>) => localStorage.setItem(LS_ALL_FILES, JSON.stringify(map))
+let db: IDBDatabase | null = null
 
-const readAllShared = (): Record<string, SharedFileRecord[]> =>
-  JSON.parse(localStorage.getItem(LS_SHARED_FILES) || "{}")
+async function initDB(): Promise<IDBDatabase> {
+  if (db) return db
 
-const writeAllShared = (map: Record<string, SharedFileRecord[]>) =>
-  localStorage.setItem(LS_SHARED_FILES, JSON.stringify(map))
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1)
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => {
+      db = request.result
+      resolve(db)
+    }
+    request.onupgradeneeded = (event) => {
+      const database = (event.target as IDBOpenDBRequest).result
+      if (!database.objectStoreNames.contains(STORE_FILES)) {
+        database.createObjectStore(STORE_FILES)
+      }
+      if (!database.objectStoreNames.contains(STORE_KEYS)) {
+        database.createObjectStore(STORE_KEYS)
+      }
+      if (!database.objectStoreNames.contains(STORE_LINKS)) {
+        database.createObjectStore(STORE_LINKS)
+      }
+    }
+  })
+}
 
-const readKeyStore = (): Record<string, Record<string, string>> => JSON.parse(localStorage.getItem(LS_FILE_KEYS) || "{}")
+async function readAllFiles(): Promise<Record<string, FileRecord[]>> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_FILES], "readonly")
+    const request = transaction.objectStore(STORE_FILES).get("all_files")
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result || {})
+  })
+}
 
-const writeKeyStore = (store: Record<string, Record<string, string>>) => localStorage.setItem(LS_FILE_KEYS, JSON.stringify(store))
+async function writeAllFiles(map: Record<string, FileRecord[]>): Promise<void> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_FILES], "readwrite")
+    const request = transaction.objectStore(STORE_FILES).put(map, "all_files")
+    request.onerror = () => reject(request.error)
+    transaction.oncomplete = () => resolve()
+  })
+}
 
-const readSelfDestructLinks = (): Record<string, SelfDestructLinkMeta> =>
-  JSON.parse(localStorage.getItem(LS_SELF_DESTRUCT_LINKS) || "{}")
+async function readAllShared(): Promise<Record<string, SharedFileRecord[]>> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_FILES], "readonly")
+    const request = transaction.objectStore(STORE_FILES).get("shared_files")
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result || {})
+  })
+}
 
-const writeSelfDestructLinks = (map: Record<string, SelfDestructLinkMeta>) =>
-  localStorage.setItem(LS_SELF_DESTRUCT_LINKS, JSON.stringify(map))
+async function writeAllShared(map: Record<string, SharedFileRecord[]>): Promise<void> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_FILES], "readwrite")
+    const request = transaction.objectStore(STORE_FILES).put(map, "shared_files")
+    request.onerror = () => reject(request.error)
+    transaction.oncomplete = () => resolve()
+  })
+}
+
+async function readKeyStore(): Promise<Record<string, Record<string, string>>> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_KEYS], "readonly")
+    const request = transaction.objectStore(STORE_KEYS).get("key_store")
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result || {})
+  })
+}
+
+async function writeKeyStore(store: Record<string, Record<string, string>>): Promise<void> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_KEYS], "readwrite")
+    const request = transaction.objectStore(STORE_KEYS).put(store, "key_store")
+    request.onerror = () => reject(request.error)
+    transaction.oncomplete = () => resolve()
+  })
+}
+
+async function readSelfDestructLinks(): Promise<Record<string, SelfDestructLinkMeta>> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_LINKS], "readonly")
+    const request = transaction.objectStore(STORE_LINKS).get("links_store")
+    request.onerror = () => reject(request.error)
+    request.onsuccess = () => resolve(request.result || {})
+  })
+}
+
+async function writeSelfDestructLinks(map: Record<string, SelfDestructLinkMeta>): Promise<void> {
+  const database = await initDB()
+  return new Promise((resolve, reject) => {
+    const transaction = database.transaction([STORE_LINKS], "readwrite")
+    const request = transaction.objectStore(STORE_LINKS).put(map, "links_store")
+    request.onerror = () => reject(request.error)
+    transaction.oncomplete = () => resolve()
+  })
+}
+
+async function fetchRemoteFiles(): Promise<FileRecord[]> {
+  try {
+    const response = await fetch(FILES_API, { credentials: "include" })
+    if (!response.ok) return []
+    const payload = (await response.json()) as { files?: FileRecord[] }
+    return Array.isArray(payload.files) ? payload.files : []
+  } catch {
+    return []
+  }
+}
+
+async function syncRemoteFile(record: FileRecord): Promise<void> {
+  try {
+    await fetch(FILES_API, {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+      },
+      credentials: "include",
+      body: JSON.stringify(record),
+    })
+  } catch (error) {
+    console.warn("Mongo sync skipped for file upload:", error)
+  }
+}
+
+async function deleteRemoteFile(id: number): Promise<void> {
+  try {
+    await fetch(`${FILES_API}?id=${id}`, {
+      method: "DELETE",
+      credentials: "include",
+    })
+  } catch (error) {
+    console.warn("Mongo sync skipped for file delete:", error)
+  }
+}
+
+function mergeFiles(primary: FileRecord[], fallback: FileRecord[]) {
+  const merged = new Map<number, FileRecord>()
+  for (const file of fallback) merged.set(file.id, file)
+  for (const file of primary) merged.set(file.id, file)
+  return Array.from(merged.values()).sort((a, b) => b.id - a.id)
+}
 
 const randomToken = (bytes = 16) => {
   const arr = crypto.getRandomValues(new Uint8Array(bytes))
@@ -159,37 +298,75 @@ export class DeCloudService {
     return JSON.parse(JSON.stringify(this.state))
   }
 
-  hydrateFromStorage() {
-    const wallet = localStorage.getItem(LS_WALLET)
+  async hydrateFromStorage() {
+    const sessionResponse = await fetch("/api/auth/session", { credentials: "include" })
+    if (!sessionResponse.ok) return this.getState()
+    const sessionPayload = (await sessionResponse.json()) as { address?: string }
+    const wallet = sessionPayload.address
     if (!wallet) return this.getState()
 
-    const allFiles = readAllFiles()
-    const allShared = readAllShared()
+    const allFiles = await readAllFiles()
+    const allShared = await readAllShared()
+    const remoteFiles = await fetchRemoteFiles()
 
     this.state.walletAddress = wallet
     this.state.isConnected = true
-    this.state.files = allFiles[wallet] || []
+    this.state.files = mergeFiles(remoteFiles, allFiles[wallet] || [])
     this.state.sharedFiles = allShared[wallet] || []
+    localStorage.setItem(LS_WALLET, wallet)
     return this.getState()
   }
 
   async connectWallet(provider: ProviderName) {
     await new Promise((r) => setTimeout(r, 800))
-    const mock = `0x${Math.random().toString(16).slice(2).padEnd(40, "0").slice(0, 40)}`
+    if (typeof window === "undefined" || !(window as Window & { ethereum?: unknown }).ethereum) {
+      throw new Error("WALLET_PROVIDER_NOT_FOUND")
+    }
 
-    this.state.walletAddress = mock
+    const ethereum = (window as unknown as Window & { ethereum: any }).ethereum
+    const browserProvider = new BrowserProvider(ethereum)
+    await browserProvider.send("eth_requestAccounts", [])
+    const signer = await browserProvider.getSigner()
+    const address = await signer.getAddress()
+
+    const nonceResponse = await fetch("/api/auth/nonce", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ address, provider }),
+    })
+    if (!nonceResponse.ok) throw new Error("AUTH_NONCE_FAILED")
+
+    const noncePayload = (await nonceResponse.json()) as { message?: string }
+    if (!noncePayload.message) throw new Error("AUTH_MESSAGE_MISSING")
+
+    const signature = await signer.signMessage(noncePayload.message)
+    const verifyResponse = await fetch("/api/auth/verify", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      credentials: "include",
+      body: JSON.stringify({ address, signature }),
+    })
+    if (!verifyResponse.ok) throw new Error("AUTH_SIGNATURE_FAILED")
+
+    this.state.walletAddress = address
     this.state.isConnected = true
-    localStorage.setItem(LS_WALLET, mock)
+    localStorage.setItem(LS_WALLET, address)
     localStorage.setItem(LS_PROVIDER, provider)
 
-    const allFiles = readAllFiles()
-    const allShared = readAllShared()
-    this.state.files = allFiles[mock] || []
-    this.state.sharedFiles = allShared[mock] || []
+    const allFiles = await readAllFiles()
+    const allShared = await readAllShared()
+    const remoteFiles = await fetchRemoteFiles()
+    this.state.files = mergeFiles(remoteFiles, allFiles[address] || [])
+    this.state.sharedFiles = allShared[address] || []
     return this.getState()
   }
 
-  disconnectWallet() {
+  async disconnectWallet() {
+    try {
+      await fetch("/api/auth/logout", { method: "POST", credentials: "include" })
+    } catch {
+      // Ignore logout failures.
+    }
     this.state = { walletAddress: "", isConnected: false, files: [], sharedFiles: [] }
     localStorage.removeItem(LS_WALLET)
     localStorage.removeItem(LS_PROVIDER)
@@ -200,68 +377,105 @@ export class DeCloudService {
     if (!this.state.isConnected) throw new Error("WALLET_NOT_CONNECTED")
     if (!file) throw new Error("NO_FILE")
 
-    await new Promise((r) => setTimeout(r, 800))
-    const buffer = await fileToArrayBuffer(file)
-    const rawKey = crypto.getRandomValues(new Uint8Array(32))
-    const { encryptedData, iv } = await encryptBytesAESGCM(buffer, rawKey)
-    const hash = await generateBlockchainHash(file.name, file.size, encryptedData)
-
-    const id = Date.now()
-
-    const keys = readKeyStore()
-    const wallet = this.state.walletAddress
-    keys[wallet] = keys[wallet] || {}
-    keys[wallet][fileKeyId(id)] = bytesToBase64(rawKey)
-    writeKeyStore(keys)
-
-    const record: FileRecord = {
-      id,
-      name: file.name,
-      size: file.size,
-      type: file.type,
-      encryptedData,
-      iv,
-      uploadDate: new Date().toISOString(),
-      blockchainHash: hash,
-      encrypted: true,
-      verified: true,
-      owner: this.state.walletAddress,
-      shareLink: "",
+    // Check file size (max 10MB per file)
+    const MAX_FILE_SIZE = 10 * 1024 * 1024 // 10MB
+    if (file.size > MAX_FILE_SIZE) {
+      throw new Error(`FILE_TOO_LARGE: Max file size is 10MB, got ${(file.size / (1024 * 1024)).toFixed(2)}MB`)
     }
 
-    record.shareLink = this.createSelfDestructLink(record.id, { expiresInHours: 24, maxViews: 1 })
+    try {
+      await new Promise((r) => setTimeout(r, 800))
+      const buffer = await fileToArrayBuffer(file)
+      const rawKey = crypto.getRandomValues(new Uint8Array(32))
+      const { encryptedData, iv } = await encryptBytesAESGCM(buffer, rawKey)
+      const hash = await generateBlockchainHash(file.name, file.size, encryptedData)
 
-    const allFiles = readAllFiles()
-    const updated = [record, ...(allFiles[wallet] || [])]
-    allFiles[wallet] = updated
-    writeAllFiles(allFiles)
+      const id = Date.now()
 
-    this.state.files = updated
-    return record
+      const keys = await readKeyStore()
+      const wallet = this.state.walletAddress
+      keys[wallet] = keys[wallet] || {}
+      keys[wallet][fileKeyId(id)] = bytesToBase64(rawKey)
+      
+      try {
+        await writeKeyStore(keys)
+      } catch (e) {
+        throw new Error(`STORAGE_WRITE_KEY_FAILED: ${(e as Error).message}`)
+      }
+
+      const record: FileRecord = {
+        id,
+        name: file.name,
+        size: file.size,
+        type: file.type,
+        encryptedData,
+        iv,
+        uploadDate: new Date().toISOString(),
+        blockchainHash: hash,
+        encrypted: true,
+        verified: true,
+        owner: this.state.walletAddress,
+        shareLink: "",
+      }
+
+      const allFiles = await readAllFiles()
+      const updated = [record, ...(allFiles[wallet] || [])]
+      allFiles[wallet] = updated
+      
+      try {
+        await writeAllFiles(allFiles)
+      } catch (e) {
+        throw new Error(`STORAGE_WRITE_FILES_FAILED: ${(e as Error).message}`)
+      }
+
+      await syncRemoteFile(record)
+
+      this.state.files = updated
+
+      // Generate self-destruct link AFTER file is in state
+      try {
+        record.shareLink = await this.createSelfDestructLink(record.id, { expiresInHours: 24, maxViews: 1 })
+        const updatedFiles = await readAllFiles()
+        updatedFiles[wallet] = updatedFiles[wallet].map((f) => (f.id === record.id ? record : f))
+        await writeAllFiles(updatedFiles)
+        this.state.files = updatedFiles[wallet]
+      } catch (e) {
+        console.error("Failed to generate self-destruct link:", e)
+        // Continue without link if it fails
+      }
+
+      return record
+    } catch (err) {
+      if (err instanceof Error && err.message.includes("STORAGE_")) {
+        throw err
+      }
+      throw new Error(`UPLOAD_FAILED: ${(err as Error).message}`)
+    }
   }
 
-  deleteFile(id: number) {
+  async deleteFile(id: number) {
     if (!this.state.isConnected) throw new Error("WALLET_NOT_CONNECTED")
     const wallet = this.state.walletAddress
 
-    const allFiles = readAllFiles()
+    const allFiles = await readAllFiles()
     const current = allFiles[wallet] || []
     const updated = current.filter((f) => f.id !== id)
     allFiles[wallet] = updated
-    writeAllFiles(allFiles)
+    await writeAllFiles(allFiles)
+    await deleteRemoteFile(id)
 
-    const keyStore = readKeyStore()
+    const keyStore = await readKeyStore()
     if (keyStore[wallet]?.[fileKeyId(id)]) {
       delete keyStore[wallet][fileKeyId(id)]
-      writeKeyStore(keyStore)
+      await writeKeyStore(keyStore)
     }
 
-    const links = readSelfDestructLinks()
+    const links = await readSelfDestructLinks()
     for (const token of Object.keys(links)) {
       const meta = links[token]
       if (meta.owner === wallet && meta.fileId === id) delete links[token]
     }
-    writeSelfDestructLinks(links)
+    await writeSelfDestructLinks(links)
 
     this.state.files = updated
     return this.getState()
@@ -280,7 +494,7 @@ export class DeCloudService {
 
     let keyBase64: string | undefined
     if (ownFile) {
-      const keyStore = readKeyStore()
+      const keyStore = await readKeyStore()
       keyBase64 = keyStore[this.state.walletAddress]?.[fileKeyId(file.id)]
     } else {
       keyBase64 = (sharedFile as SharedFileRecord | undefined)?.sharedKey
@@ -291,18 +505,18 @@ export class DeCloudService {
     return { name: file.name, dataURL: bytesToDataURL(bytes, file.type) }
   }
 
-  shareWithWallet(fileId: number, recipientWallet: string) {
+  async shareWithWallet(fileId: number, recipientWallet: string) {
     if (!this.state.isConnected) throw new Error("WALLET_NOT_CONNECTED")
     if (!/^0x[a-fA-F0-9]{4,}$/.test(recipientWallet)) throw new Error("INVALID_WALLET")
 
     const file = this.state.files.find((f) => f.id === fileId)
     if (!file) throw new Error("FILE_NOT_FOUND")
 
-    const keyStore = readKeyStore()
+    const keyStore = await readKeyStore()
     const senderKey = keyStore[this.state.walletAddress]?.[fileKeyId(file.id)]
     if (!senderKey) throw new Error("MISSING_DECRYPTION_KEY")
 
-    const allShared = readAllShared()
+    const allShared = await readAllShared()
     const payload: SharedFileRecord = {
       ...file,
       sharedBy: this.state.walletAddress,
@@ -311,14 +525,14 @@ export class DeCloudService {
     }
 
     allShared[recipientWallet] = [...(allShared[recipientWallet] || []), payload]
-    writeAllShared(allShared)
+    await writeAllShared(allShared)
 
     return { recipient: recipientWallet, fileId }
   }
 
-  refreshSharedInbox() {
+  async refreshSharedInbox() {
     if (!this.state.isConnected) throw new Error("WALLET_NOT_CONNECTED")
-    const allShared = readAllShared()
+    const allShared = await readAllShared()
     this.state.sharedFiles = allShared[this.state.walletAddress] || []
     return this.state.sharedFiles.slice()
   }
@@ -334,13 +548,13 @@ export class DeCloudService {
     }
   }
 
-  createSelfDestructLink(fileId: number, options: LinkOptions = {}) {
+  async createSelfDestructLink(fileId: number, options: LinkOptions = {}) {
     if (!this.state.isConnected) throw new Error("WALLET_NOT_CONNECTED")
 
     const file = this.state.files.find((f) => f.id === fileId)
     if (!file) throw new Error("FILE_NOT_FOUND")
 
-    const keyStore = readKeyStore()
+    const keyStore = await readKeyStore()
     const wallet = this.state.walletAddress
     const keyBase64 = keyStore[wallet]?.[fileKeyId(fileId)]
     if (!keyBase64) throw new Error("MISSING_DECRYPTION_KEY")
@@ -349,14 +563,14 @@ export class DeCloudService {
     const maxViews = Math.max(1, options.maxViews ?? 1)
 
     const token = randomToken(16)
-    const links = readSelfDestructLinks()
+    const links = await readSelfDestructLinks()
     links[token] = {
       fileId,
       owner: wallet,
       expiresAt: new Date(Date.now() + expiresInHours * 60 * 60 * 1000).toISOString(),
       remainingViews: maxViews,
     }
-    writeSelfDestructLinks(links)
+    await writeSelfDestructLinks(links)
 
     const origin = typeof window !== "undefined" ? window.location.origin : "https://decloud.local"
     return `${origin}/?share=${token}#k=${encodeURIComponent(keyBase64)}`
@@ -368,23 +582,23 @@ export class DeCloudService {
     const keyBase64 = parseHashParam(url, "k")
     if (!token || !keyBase64) throw new Error("INVALID_SHARE_LINK")
 
-    const links = readSelfDestructLinks()
+    const links = await readSelfDestructLinks()
     const meta = links[token]
     if (!meta) throw new Error("LINK_NOT_FOUND")
 
     if (new Date(meta.expiresAt).getTime() < Date.now()) {
       delete links[token]
-      writeSelfDestructLinks(links)
+      await writeSelfDestructLinks(links)
       throw new Error("LINK_EXPIRED")
     }
 
     if (meta.remainingViews <= 0) {
       delete links[token]
-      writeSelfDestructLinks(links)
+      await writeSelfDestructLinks(links)
       throw new Error("LINK_DESTROYED")
     }
 
-    const allFiles = readAllFiles()
+    const allFiles = await readAllFiles()
     const ownerFiles = allFiles[meta.owner] || []
     const file = ownerFiles.find((f) => f.id === meta.fileId)
     if (!file) throw new Error("FILE_NOT_FOUND")
@@ -404,7 +618,7 @@ export class DeCloudService {
     } else {
       links[token] = meta
     }
-    writeSelfDestructLinks(links)
+    await writeSelfDestructLinks(links)
 
     return {
       name: file.name,
@@ -416,10 +630,33 @@ export class DeCloudService {
 
 function fileToArrayBuffer(file: File): Promise<ArrayBuffer> {
   return new Promise((resolve, reject) => {
+    if (!file) {
+      reject(new Error("FILE_OBJECT_IS_NULL"))
+      return
+    }
+    if (!file.name || file.size === undefined) {
+      reject(new Error("FILE_OBJECT_INVALID_PROPERTIES"))
+      return
+    }
     const reader = new FileReader()
-    reader.onerror = () => reject(new Error("READ_FAIL"))
-    reader.onload = () => resolve(reader.result as ArrayBuffer)
-    reader.readAsArrayBuffer(file)
+    reader.onerror = (event) => {
+      const errorCode = (event.target as FileReader).error?.name || "UNKNOWN_ERROR"
+      reject(new Error(`READ_FAIL: ${errorCode}`))
+    }
+    reader.onload = () => {
+      if (!reader.result) {
+        reject(new Error("READ_RESULT_IS_NULL"))
+        return
+      }
+      resolve(reader.result as ArrayBuffer)
+    }
+    reader.onabort = () => reject(new Error("READ_ABORTED"))
+    
+    try {
+      reader.readAsArrayBuffer(file)
+    } catch (e) {
+      reject(new Error(`READ_INIT_FAILED: ${(e as Error).message}`))
+    }
   })
 }
 
